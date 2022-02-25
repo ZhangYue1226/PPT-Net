@@ -22,10 +22,10 @@ __all__ = ['Network']
 class Network(nn.Module):
     def __init__(self, param=None):
         super(Network, self).__init__()
-        # backbone
+        # backbone 定义
         self.backbone = PointNet2(param=param)
         
-        # global descriptor
+        # global descriptor 定义
         aggregation = param["AGGREGATION"]
 
         if aggregation == 'spvlad':
@@ -39,14 +39,16 @@ class Network(nn.Module):
             )
         else:
             print("No aggregation algorithm: ", aggregation)
-
+    
+    # 总的前向函数：
     def forward(self, x, return_feat=False):
         r"""
         x: B x 1 x N x 3
         """
         x = x.squeeze(1)
-        f0, f1, f2, f3 = self.backbone(x)
-
+        f0, f1, f2, f3 = self.backbone(x)  # 初始数据x输入backbone，输出为f0, f1, f2, f3
+        
+        # f0, f1, f2, f3输入aggregation，输出x
         x = self.aggregation(f0, f1, f2, f3)   # B x C0x64x1, BxC1x256, BxC2x1024, BxC3x4096 -> Bx256
         
         if return_feat:
@@ -57,10 +59,11 @@ class Network(nn.Module):
 class PointNet2(nn.Module):
     def __init__(self, param=None):
         super().__init__()
-        c = 3
-        k = 13
+        c = 3 # 点云数据维度为3
+        k = 13 # 采样点数设置为13
         use_xyz = True
-        self.SA_modules = nn.ModuleList()
+        # SA是embedding模块
+        self.SA_modules = nn.ModuleList() 
         sap = param['SAMPLING']
         knn = param['KNN']
         fs = param['FEATURE_SIZE']
@@ -69,12 +72,14 @@ class PointNet2(nn.Module):
         self.SA_modules.append(PointNet2SAModule(npoint=sap[1], nsample=knn[1], gp=gp, mlp=[64, 64, 64, 128], use_xyz=use_xyz))
         self.SA_modules.append(PointNet2SAModule(npoint=sap[2], nsample=knn[2], gp=gp, mlp=[128, 128, 128, 256], use_xyz=use_xyz))
         self.SA_modules.append(PointNet2SAModule(npoint=sap[3], nsample=knn[3], gp=gp, mlp=[256, 256, 256, 512], use_xyz=use_xyz))
-        self.FP_modules = nn.ModuleList()
+        # FP是transformer模块
+        self.FP_modules = nn.ModuleList() 
         self.FP_modules.append(PointNet2FPModule(mlp=[fs[1] + c, 256, 256, fs[0]]))
         self.FP_modules.append(PointNet2FPModule(mlp=[fs[2] + 64, 256, fs[1]]))
         self.FP_modules.append(PointNet2FPModule(mlp=[fs[3] + 128, 256, fs[2]]))
         self.FP_modules.append(PointNet2FPModule(mlp=[512 + 256, 256, fs[3]]))
-
+    
+    # backbone的前向函数
     def forward(self, pointcloud: torch.cuda.FloatTensor):
         r"""
             Forward pass of the network
@@ -86,13 +91,14 @@ class PointNet2(nn.Module):
                 Each point in the point-cloud MUST
                 be formated as (x, y, z, features...)
         """
+        # l_xyz为点云的三维；l_features为点云的特征
         l_xyz, l_features = [pointcloud], [pointcloud.transpose(1, 2).contiguous()]
         for i in range(len(self.SA_modules)):
-            li_xyz, li_features = self.SA_modules[i](l_xyz[i], l_features[i])
+            li_xyz, li_features = self.SA_modules[i](l_xyz[i], l_features[i])  # 先输入SA模块
             l_xyz.append(li_xyz)
             l_features.append(li_features)
         for i in range(-1, -(len(self.FP_modules) + 1), -1):
-            l_features[i - 1] = self.FP_modules[i](l_xyz[i - 1], l_xyz[i], l_features[i - 1], l_features[i])
+            l_features[i - 1] = self.FP_modules[i](l_xyz[i - 1], l_xyz[i], l_features[i - 1], l_features[i]) #再输入FP模块
         
         # l3: B x C x 64
         # l2: B x C x 256
@@ -107,7 +113,8 @@ class _PointNet2SAModuleBase(nn.Module):
         self.groupers = None
         self.mlps = None
         self.sas = None
-
+    
+    # embedding模块前向函数
     def forward(self, xyz: torch.Tensor, features: torch.Tensor = None) -> (torch.Tensor, torch.Tensor):
         r"""
         Parameters
@@ -125,7 +132,7 @@ class _PointNet2SAModuleBase(nn.Module):
         """
         new_features_list = []
         xyz_trans = xyz.transpose(1, 2).contiguous()    # B x 3 x N
-        center_idx = pointops.furthestsampling(xyz, self.npoint)
+        center_idx = pointops.furthestsampling(xyz, self.npoint) # FPS最远点采样，得到中心点
         new_xyz = pointops.gathering(
             xyz_trans,
             center_idx
@@ -143,7 +150,7 @@ class _PointNet2SAModuleBase(nn.Module):
             new_features = new_features.squeeze(-1)     # B x C' x M
             g_features = self.sas[i](new_features)      # B x C' x M
             new_features_list.append(g_features)
-        return new_xyz, torch.cat(new_features_list, dim=1)
+        return new_xyz, torch.cat(new_features_list, dim=1) 
 
 
 class PointNet2SAModuleMSG(_PointNet2SAModuleBase):
@@ -200,12 +207,13 @@ class PointNet2SAModule(PointNet2SAModuleMSG):
     def __init__(self, *, mlp: List[int], npoint: int = None, radius: float = None, nsample: int = None, gp: int = None, bn: bool = True, use_xyz: bool = True):
         super().__init__(mlps=[mlp], npoint=npoint, radii=[radius], nsamples=[nsample], gp=gp, bn=bn, use_xyz=use_xyz)
 
+# self-attention module
 class SA_Layer(nn.Module):
     def __init__(self, channels, gp):
         super().__init__()
         mid_channels = channels
         self.gp = gp
-        assert mid_channels % 4 == 0
+        assert mid_channels % 4 == 0  #?
         self.q_conv = nn.Conv1d(channels, mid_channels, 1, bias=False, groups=gp)
         self.k_conv = nn.Conv1d(channels, mid_channels, 1, bias=False, groups=gp)
         self.q_conv.weight = self.k_conv.weight 
@@ -215,6 +223,7 @@ class SA_Layer(nn.Module):
         self.act = nn.ReLU()
         self.softmax = nn.Softmax(dim=-1)
 
+    # 1个stage的transformer：
     def forward(self, x):
         r"""
         x: B x C x N
@@ -238,6 +247,7 @@ class SA_Layer(nn.Module):
         x = x + x_r
         return x
 
+# 何意？？
 class PointNet2FPModule(nn.Module):
     r"""Propigates the features of one set to another
     Parameters
