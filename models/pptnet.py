@@ -62,25 +62,24 @@ class PointNet2(nn.Module):  #PointNet2模型的定义
         c = 3 # 点云数据维度为3
         k = 13 # 采样点数设置为13
         use_xyz = True   #use_xyz是什么？？？
-        # 定义SA模块
-        # SA是embedding模块  SA——Pointnet set abstraction layer 点云点集抽象化层
+        # 定义SA模块 SA——Pointnet set abstraction layer 点云点集抽象化层
         self.SA_modules = nn.ModuleList() 
         sap = param['SAMPLING']  #赋予每个参数一个变量名称
         knn = param['KNN']
         fs = param['FEATURE_SIZE']
         gp = param['GROUP']
         self.SA_modules.append(PointNet2SAModule(npoint=sap[0], nsample=knn[0], gp=gp, mlp=[c, 32, 32, 64], use_xyz=use_xyz))  #append()函数是在列表末尾添加新的对象，且将添加的对象作为一个整体
-        self.SA_modules.append(PointNet2SAModule(npoint=sap[1], nsample=knn[1], gp=gp, mlp=[64, 64, 64, 128], use_xyz=use_xyz))  #
+        self.SA_modules.append(PointNet2SAModule(npoint=sap[1], nsample=knn[1], gp=gp, mlp=[64, 64, 64, 128], use_xyz=use_xyz))  
         self.SA_modules.append(PointNet2SAModule(npoint=sap[2], nsample=knn[2], gp=gp, mlp=[128, 128, 128, 256], use_xyz=use_xyz))
         self.SA_modules.append(PointNet2SAModule(npoint=sap[3], nsample=knn[3], gp=gp, mlp=[256, 256, 256, 512], use_xyz=use_xyz))
-        # FP是transformer模块
+        # FP是feature propagation模块，见最后，但是不知道在做什么？？？
         self.FP_modules = nn.ModuleList() 
         self.FP_modules.append(PointNet2FPModule(mlp=[fs[1] + c, 256, 256, fs[0]]))
         self.FP_modules.append(PointNet2FPModule(mlp=[fs[2] + 64, 256, fs[1]]))
         self.FP_modules.append(PointNet2FPModule(mlp=[fs[3] + 128, 256, fs[2]]))
         self.FP_modules.append(PointNet2FPModule(mlp=[512 + 256, 256, fs[3]]))
     
-    # backbone的前向函数
+    # backbone：PointNet2的前向函数
     def forward(self, pointcloud: torch.cuda.FloatTensor):
         r"""
             Forward pass of the network
@@ -95,11 +94,11 @@ class PointNet2(nn.Module):  #PointNet2模型的定义
         # l_xyz为点云的三维；l_features为点云的特征
         l_xyz, l_features = [pointcloud], [pointcloud.transpose(1, 2).contiguous()]
         for i in range(len(self.SA_modules)):
-            li_xyz, li_features = self.SA_modules[i](l_xyz[i], l_features[i])  # 先输入SA模块
+            li_xyz, li_features = self.SA_modules[i](l_xyz[i], l_features[i])  # 先输入SA模块 点集抽象化
             l_xyz.append(li_xyz)
             l_features.append(li_features)
         for i in range(-1, -(len(self.FP_modules) + 1), -1):
-            l_features[i - 1] = self.FP_modules[i](l_xyz[i - 1], l_xyz[i], l_features[i - 1], l_features[i]) #再输入FP模块
+            l_features[i - 1] = self.FP_modules[i](l_xyz[i - 1], l_xyz[i], l_features[i - 1], l_features[i]) #再输入FP模块 feature propagation特征传播
         
         # l3: B x C x 64
         # l2: B x C x 256
@@ -159,7 +158,7 @@ class PointNet2SAModuleMSG(_PointNet2SAModuleBase):
     Parameters
     ----------
     npoint : int
-        Number of features
+        Number of features  特征数量
     radii : list of float32
         list of radii to group with
     nsamples : list of int32
@@ -208,7 +207,7 @@ class PointNet2SAModule(PointNet2SAModuleMSG):
     def __init__(self, *, mlp: List[int], npoint: int = None, radius: float = None, nsample: int = None, gp: int = None, bn: bool = True, use_xyz: bool = True):
         super().__init__(mlps=[mlp], npoint=npoint, radii=[radius], nsamples=[nsample], gp=gp, bn=bn, use_xyz=use_xyz)
 
-# self-attention module
+# self-attention module  自注意力层
 class SA_Layer(nn.Module):
     def __init__(self, channels, gp):
         super().__init__()
@@ -217,40 +216,40 @@ class SA_Layer(nn.Module):
         assert mid_channels % 4 == 0  #?
         self.q_conv = nn.Conv1d(channels, mid_channels, 1, bias=False, groups=gp)
         self.k_conv = nn.Conv1d(channels, mid_channels, 1, bias=False, groups=gp)
-        self.q_conv.weight = self.k_conv.weight 
+        self.q_conv.weight = self.k_conv.weight         #应该是group的意思：产生q和k的filter相同之意吗？？？weight相等是何意？？？
         self.v_conv = nn.Conv1d(channels, channels, 1)
         self.trans_conv = nn.Conv1d(channels, channels, 1)
         self.after_norm = nn.BatchNorm1d(channels)
         self.act = nn.ReLU()
         self.softmax = nn.Softmax(dim=-1)
 
-    # 1个stage的transformer：
+    # group self-attention 前向函数：
     def forward(self, x):
         r"""
         x: B x C x N
         """
         bs, ch, nums = x.size()
-        x_q = self.q_conv(x)                                # B x C x N
+        x_q = self.q_conv(x)                                # B x C x N  #产生query
         x_q = x_q.reshape(bs, self.gp, ch//self.gp, nums)
         x_q = x_q.permute(0, 1, 3, 2)                       # B x gp x num x C'
 
-        x_k = self.k_conv(x)                                # B x C x N        
+        x_k = self.k_conv(x)                                # B x C x N        #产生key
         x_k = x_k.reshape(bs, self.gp, ch//self.gp, nums)   # B x gp x C' x nums
 
-        x_v = self.v_conv(x)
-        energy = torch.matmul(x_q, x_k)                     # B x gp x N x N 
-        energy = torch.sum(energy, dim=1, keepdims=False)
+        x_v = self.v_conv(x)                                                   #产生value
+        energy = torch.matmul(x_q, x_k)                     # B x gp x N x N   #Q与K作矩阵乘法
+        energy = torch.sum(energy, dim=1, keepdims=False)                      #在第1维上相加   
                 
         attn = self.softmax(energy)
         attn = attn / (1e-9 + attn.sum(dim=1, keepdims=True))
-        x_r = torch.matmul(x_v, attn)
+        x_r = torch.matmul(x_v, attn)                                       #value与W作矩阵乘法
         x_r = self.act(self.after_norm(self.trans_conv(x - x_r)))
-        x = x + x_r
+        x = x + x_r                                                         #相加（详见笔记图）
         return x
 
-# 何意？？
+# 何意？？在做什么？？？
 class PointNet2FPModule(nn.Module):
-    r"""Propigates the features of one set to another
+    r"""Propagates the features of one set to another  将一个集合的特征转播给其他集合
     Parameters
     ----------
     mlp : list
@@ -267,17 +266,17 @@ class PointNet2FPModule(nn.Module):
         Parameters
         ----------
         unknown : torch.Tensor
-            (B, n, 3) tensor of the xyz positions of the unknown features
+            (B, n, 3) tensor of the xyz positions of the unknown features   未知特征的xyz位置
         known : torch.Tensor
-            (B, m, 3) tensor of the xyz positions of the known features
+            (B, m, 3) tensor of the xyz positions of the known features     已知特征的xyz位置
         unknow_feats : torch.Tensor
-            (B, C1, n) tensor of the features to be propigated to
+            (B, C1, n) tensor of the features to be propigated to    要传播至的特征
         known_feats : torch.Tensor
-            (B, C2, m) tensor of features to be propigated
+            (B, C2, m) tensor of features to be propigated    要从哪个特征传播
         Returns
         -------
         new_features : torch.Tensor
-            (B, mlp[-1], n) tensor of the features of the unknown features
+            (B, mlp[-1], n) tensor of the features of the unknown features  未知特征的特征
         """
         if known is not None:
             dist, idx = pointops.nearestneighbor(unknown, known)
