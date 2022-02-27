@@ -133,25 +133,25 @@ class _PointNet2SAModuleBase(nn.Module):
         """
         new_features_list = []
         xyz_trans = xyz.transpose(1, 2).contiguous()    # B x 3 x N
-        center_idx = pointops.furthestsampling(xyz, self.npoint) # FPS最远点采样，得到中心点
+        center_idx = pointops.furthestsampling(xyz, self.npoint) # FPS最远点采样，得到中心点的xyz坐标，命名为center_idx
         new_xyz = pointops.gathering(
             xyz_trans,
             center_idx
-        ).transpose(1, 2).contiguous() if self.npoint is not None else None
+        ).transpose(1, 2).contiguous() if self.npoint is not None else None    #将点云坐标和中心点坐标放在一起，命名为new_xyz
         
         center_features = pointops.gathering(
             features,
             center_idx
-        )
+        )                                                                      #将点云特征和中心点坐标放在一起，命名为center_features
 
-        for i in range(len(self.groupers)):
-            new_features = self.groupers[i](xyz, new_xyz, features, center_features)            # B x C x M x K
-            new_features = self.mlps[i](new_features)   # B x C' x M x K
-            new_features = F.max_pool2d(new_features, kernel_size=[1, new_features.size(3)])    # B x C' x M x 1
+        for i in range(len(self.groupers)):                                                                      #以下过程循环
+            new_features = self.groupers[i](xyz, new_xyz, features, center_features)            # B x C x M x K  #新特征的计算
+            new_features = self.mlps[i](new_features)   # B x C' x M x K                                         #新特征进行MLP
+            new_features = F.max_pool2d(new_features, kernel_size=[1, new_features.size(3)])    # B x C' x M x 1 #新特征进行maxpooling
             new_features = new_features.squeeze(-1)     # B x C' x M
-            g_features = self.sas[i](new_features)      # B x C' x M
-            new_features_list.append(g_features)
-        return new_xyz, torch.cat(new_features_list, dim=1) 
+            g_features = self.sas[i](new_features)      # B x C' x M                                             #新特征进行自注意力
+            new_features_list.append(g_features)                                                                 #将自注意力后的特征放入列表new_features_list
+        return new_xyz, torch.cat(new_features_list, dim=1)                                                      #在第1维上concat，返回到new_xyz
 
 
 class PointNet2SAModuleMSG(_PointNet2SAModuleBase):
