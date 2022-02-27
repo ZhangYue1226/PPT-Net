@@ -22,25 +22,25 @@ __all__ = ['Network']
 class Network(nn.Module):
     def __init__(self, param=None):
         super(Network, self).__init__()
-        # backbone 定义
+        # backbone 定义：backbone为：PointNet2模型
         self.backbone = PointNet2(param=param)
         
-        # global descriptor 定义
-        aggregation = param["AGGREGATION"]
+        # global descriptor 定义：全局描述符变量名称：aggregation
+        aggregation = param["AGGREGATION"]  #param["AGGREGATION"]不明白何意？？？是aggregation变量被赋值为"AGGREGATION"这个参数吗？当使用时选定"AGGREGATION"参数的值，即选定；了aggregation变量的值？？？
 
-        if aggregation == 'spvlad':
+        if aggregation == 'spvlad':  #若全局描述符选用‘spvlad’，则全局描述符选用SpatialPyramidNetVLAD模型
             self.aggregation = lp.SpatialPyramidNetVLAD(
-                feature_size=param["FEATURE_SIZE"],         # 256,256,256,256
+                feature_size=param["FEATURE_SIZE"],         # 256,256,256,256   #这些注释何意？为何各有4个？是如何确定的？
                 max_samples=param["MAX_SAMPLES"],           # 64,256,1024,4096
                 cluster_size=param["CLUSTER_SIZE"],         # 1,4,16,64
                 output_dim=param["OUTPUT_DIM"],             # 256,256,256,256
-                gating=param['GATING'],                     # True
+                gating=param['GATING'],                     # True #使用gating机制
                 add_batch_norm=True
             )
         else:
-            print("No aggregation algorithm: ", aggregation)
+            print("No aggregation algorithm: ", aggregation)  #若不选spvlad为全局描述符，则没有aggregation运算
     
-    # 总的前向函数：
+    # 总模型的前向函数：
     def forward(self, x, return_feat=False):
         r"""
         x: B x 1 x N x 3
@@ -49,27 +49,28 @@ class Network(nn.Module):
         f0, f1, f2, f3 = self.backbone(x)  # 初始数据x输入backbone，输出为f0, f1, f2, f3
         
         # f0, f1, f2, f3输入aggregation，输出x
-        x = self.aggregation(f0, f1, f2, f3)   # B x C0x64x1, BxC1x256, BxC2x1024, BxC3x4096 -> Bx256
+        x = self.aggregation(f0, f1, f2, f3)   # B x C0x64x1, BxC1x256, BxC2x1024, BxC3x4096 -> Bx256   #注释是何意？
         
         if return_feat:
             return x, feature
         else:
             return x
 
-class PointNet2(nn.Module):
+class PointNet2(nn.Module):  #PointNet2模型的定义
     def __init__(self, param=None):
         super().__init__()
         c = 3 # 点云数据维度为3
         k = 13 # 采样点数设置为13
-        use_xyz = True
-        # SA是embedding模块
+        use_xyz = True   #use_xyz是什么？？？
+        # 定义SA模块
+        # SA是embedding模块  SA——Pointnet set abstraction layer 点云点集抽象化层
         self.SA_modules = nn.ModuleList() 
-        sap = param['SAMPLING']
+        sap = param['SAMPLING']  #赋予每个参数一个变量名称
         knn = param['KNN']
         fs = param['FEATURE_SIZE']
         gp = param['GROUP']
-        self.SA_modules.append(PointNet2SAModule(npoint=sap[0], nsample=knn[0], gp=gp, mlp=[c, 32, 32, 64], use_xyz=use_xyz))
-        self.SA_modules.append(PointNet2SAModule(npoint=sap[1], nsample=knn[1], gp=gp, mlp=[64, 64, 64, 128], use_xyz=use_xyz))
+        self.SA_modules.append(PointNet2SAModule(npoint=sap[0], nsample=knn[0], gp=gp, mlp=[c, 32, 32, 64], use_xyz=use_xyz))  #append()函数是在列表末尾添加新的对象，且将添加的对象作为一个整体
+        self.SA_modules.append(PointNet2SAModule(npoint=sap[1], nsample=knn[1], gp=gp, mlp=[64, 64, 64, 128], use_xyz=use_xyz))  #
         self.SA_modules.append(PointNet2SAModule(npoint=sap[2], nsample=knn[2], gp=gp, mlp=[128, 128, 128, 256], use_xyz=use_xyz))
         self.SA_modules.append(PointNet2SAModule(npoint=sap[3], nsample=knn[3], gp=gp, mlp=[256, 256, 256, 512], use_xyz=use_xyz))
         # FP是transformer模块
@@ -120,15 +121,15 @@ class _PointNet2SAModuleBase(nn.Module):
         Parameters
         ----------
         xyz : torch.Tensor
-            (B, N, 3) tensor of the xyz coordinates of the features
+            (B, N, 3) tensor of the xyz coordinates of the features  特征的xyz坐标
         features : torch.Tensor
-            (B, N, C) tensor of the descriptors of the the features
+            (B, N, C) tensor of the descriptors of the the features   特征的描述符
         Returns
         -------
         new_xyz : torch.Tensor
-            (B, npoint, 3) tensor of the new features' xyz
+            (B, npoint, 3) tensor of the new features' xyz  新特征的xyz
         new_features : torch.Tensor
-            (B, npoint, \sum_k(mlps[k][-1])) tensor of the new_features descriptors
+            (B, npoint, \sum_k(mlps[k][-1])) tensor of the new_features descriptors  新特征描述符
         """
         new_features_list = []
         xyz_trans = xyz.transpose(1, 2).contiguous()    # B x 3 x N
@@ -154,7 +155,7 @@ class _PointNet2SAModuleBase(nn.Module):
 
 
 class PointNet2SAModuleMSG(_PointNet2SAModuleBase):
-    r"""Pointnet set abstrction layer with multiscale grouping
+    r"""Pointnet set abstrction layer with multiscale grouping     PointNet2SAModuleMSG为Pointnet带有多尺度成组的点集抽象化层（详见PointNet++MSG）
     Parameters
     ----------
     npoint : int
@@ -170,7 +171,7 @@ class PointNet2SAModuleMSG(_PointNet2SAModuleBase):
     """
     def __init__(self, *, npoint: int, radii: List[float], nsamples: List[int], mlps: List[List[int]], gp: int, bn: bool = True, use_xyz: bool = True):
         super().__init__()
-        assert len(radii) == len(nsamples) == len(mlps)
+        assert len(radii) == len(nsamples) == len(mlps)  #len()：字符串长度或列表元素个数
         self.npoint = npoint
         self.groupers = nn.ModuleList()
         self.mlps = nn.ModuleList()
@@ -190,19 +191,19 @@ class PointNet2SAModuleMSG(_PointNet2SAModuleBase):
 
 
 class PointNet2SAModule(PointNet2SAModuleMSG):
-    r"""Pointnet set abstrction layer
+    r"""Pointnet set abstrction layer    PointNet2SAModule为Pointnet点集抽象化层
     Parameters
     ----------
     npoint : int
-        Number of features
+        Number of features 特征数量
     radius : float
-        Radius of ball
+        Radius of ball  球半径
     nsample : int
-        Number of samples in the ball query
+        Number of samples in the ball query  球查询的样本数量
     mlp : list
-        Spec of the pointnet_old before the global max_pool
+        Spec of the pointnet_old before the global max_pool  
     bn : bool
-        Use batchnorm
+        Use batchnorm  使用批量归一化
     """
     def __init__(self, *, mlp: List[int], npoint: int = None, radius: float = None, nsample: int = None, gp: int = None, bn: bool = True, use_xyz: bool = True):
         super().__init__(mlps=[mlp], npoint=npoint, radii=[radius], nsamples=[nsample], gp=gp, bn=bn, use_xyz=use_xyz)
