@@ -35,12 +35,13 @@ class NetVLADBase(nn.Module):
 
         if gating:
             self.context_gating = GatingContext(output_dim, add_batch_norm=add_batch_norm)
-
+    
+    # VLAD的总前向函数：（这部分不明白在做什么？？？）
     def forward(self, x):
         x = x.transpose(1, 3).contiguous()                          # B x 1024 x N x 1 -> B x 1 x N x 1024
         x = x.view((-1, self.max_samples, self.feature_size))       # B x N x 1024
 
-        activation = torch.matmul(x, self.cluster_weights)          # B x N x 1024 X 1024 x 64 -> B x N x 64  # x*weights
+        activation = torch.matmul(x, self.cluster_weights)          # B x N x 1024 X 1024 x 64 -> B x N x 64     # x*weights
         if self.add_batch_norm:
             # activation = activation.transpose(1,2).contiguous()
             activation = activation.view(-1, self.cluster_size)     # B x N x 64 -> BN x 64
@@ -91,14 +92,14 @@ class SpatialPyramidNetVLAD(nn.Module):
         if self.gating:
             self.context_gating = GatingContext(output_dim[0], add_batch_norm=add_batch_norm)
 
-    # VLAD Pooling的前向函数
+    # 金字塔VLAD的前向函数： 
     def forward(self, f0, f1, f2, f3):
         v0 = self.vlad0(f0)
         v1 = self.vlad1(f1)
         v2 = self.vlad2(f2)
         v3 = self.vlad3(f3)
         vlad = torch.cat((v0, v1, v2, v3), dim=-1)
-        vlad = torch.matmul(vlad, self.hidden_weights)      # B x (1024*64) X (1024*64) x 256 -> B x 256
+        vlad = torch.matmul(vlad, self.hidden_weights)      # B x (1024*64) X (1024*64) x 256 -> B x 256  #在做什么？？？
         vlad = self.bn2(vlad)                               # B x 256 -> B x 256
         
         if self.gating:
@@ -122,7 +123,7 @@ class GatingContext(nn.Module):
                 torch.randn(dim) * 1 / math.sqrt(dim))
             self.bn1 = None
     
-    # context gating的前向函数
+    # context gating的前向函数：
     def forward(self, x):
         gates = torch.matmul(x, self.gating_weights)    # B x 256 X 256 x 256 -> B x 256
 
